@@ -1,2 +1,2 @@
 # gh-install
-Github client extension for install Github releases
+Github client extension for installing Github repository releases
