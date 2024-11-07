@@ -29,7 +29,7 @@ var (
 			using Homebrew or other package managers.`,
 		Args:    validateRepositoryArg,
 		RunE:    runInstall,
-		Version: "1.1.0",
+		Version: "1.1.1",
 	}
 	targetRepo, releaseVersion, releaseInstallPath           string
 	downloadPattern, binaryPattern, binaryName, downloadName string

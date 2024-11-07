@@ -64,11 +64,19 @@ func (s *Selector) SelectItems() ([]*SelectorItem, error) {
 	output.Output().Set(fmt.Sprintf("%s_%s", strings.ReplaceAll(s.Kind, " ", "_"), "matches"), matches)
 
 	if !s.Multiple && len(selectedItems) > 1 {
-		return nil, fmt.Errorf("more than one item matching '%s' found for %s", s.Matcher, s.Kind)
+		if s.Name != "" {
+			return nil, fmt.Errorf("more than one item '%s' found for %s", s.Name, s.Kind)
+		} else {
+			return nil, fmt.Errorf("more than one item matching '%s' found for %s", s.Matcher, s.Kind)
+		}
 	}
 
 	if len(selectedItems) == 0 {
-		return nil, fmt.Errorf("no %s matching '%s' found", s.Kind, s.Matcher)
+		if s.Name != "" {
+			return nil, fmt.Errorf("no %s named '%s' found", s.Kind, s.Name)
+		} else {
+			return nil, fmt.Errorf("no %s matching '%s' found", s.Kind, s.Matcher)
+		}
 	}
 
 	return selectedItems, nil
