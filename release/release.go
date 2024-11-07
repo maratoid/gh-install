@@ -1,16 +1,17 @@
 package release
 
 import (
-	"os"
-	"os/exec"
+	"fmt"
 	"io"
 	"io/fs"
+	"os"
+	"os/exec"
 	"path"
-	"fmt"
 
 	"github.com/cli/go-gh/v2"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/maratoid/gh-install/selector"
+	"github.com/maratoid/gh-install/output"
 )
 
 type IRelease interface {
@@ -27,17 +28,17 @@ type GithubRelease struct {
 	Client             *api.RESTClient
 }
 
-func MakeGithubRelease(repo string, ver string, dest string, 
+func MakeGithubRelease(repo string, ver string, dest string,
 	assetMatcher string, binMatcher string, cli *api.RESTClient, interactive bool) IRelease {
-	
+
 	return &GithubRelease{
-		Repository: repo,
-		Interactive: interactive,
-		ReleaseVersion: ver,
-		InstallPath: dest,
-		AssetPattern: assetMatcher,
+		Repository:         repo,
+		Interactive:        interactive,
+		ReleaseVersion:     ver,
+		InstallPath:        dest,
+		AssetPattern:       assetMatcher,
 		AssetBinaryPattern: binMatcher,
-		Client: cli,
+		Client:             cli,
 	}
 }
 
@@ -123,6 +124,15 @@ func (r *GithubRelease) installRpm(binaryPath string) error {
 }
 
 func (r *GithubRelease) Install() error {
+	var err error
+	defer func() {
+		if err != nil {
+			output.Output().Set("error", err)
+		}
+	}()
+	output.Output().Set("target_repository", r.Repository)
+	output.Output().Set("install_dir", r.InstallPath)
+
 	releaseSelector, err := selector.ReleaseSelector(r.Client, r.Repository, r.ReleaseVersion, r.Interactive)
 	if err != nil {
 		return err
@@ -145,15 +155,17 @@ func (r *GithubRelease) Install() error {
 	if err != nil {
 		return err
 	}
+	output.Output().Set("download_dir", downloadDir)
 
-	_, stdErr, err := gh.Exec("release", "download", releases[0].Name, 
+	stdOut, stdErr, err := gh.Exec("release", "download", releases[0].Name,
 		"--repo", r.Repository, "--pattern", assets[0].Name, "--dir", downloadDir)
 	if err != nil {
+		output.Output().Set("gh_stderr", stdErr.String())
 		return fmt.Errorf("failed to run gh command: %s", stdErr.String())
 	}
+	output.Output().Set("gh_stdout", stdOut.String())
 
-
-	binarySelector, err := selector.BinarySelector(path.Join(downloadDir, 
+	binarySelector, err := selector.BinarySelector(path.Join(downloadDir,
 		assets[0].Name), r.AssetBinaryPattern, r.Interactive)
 	if err != nil {
 		return err
@@ -164,22 +176,30 @@ func (r *GithubRelease) Install() error {
 	}
 
 	var installedBinaries []string
+	binariesOutput := make(map[string]string)
 	for _, binary := range binaries {
 		if binary.GetPropBool("archive") {
+			binariesOutput[binary.Name] = "compressed"
 			err = r.installArchivedBinary(binary.GetPropFs("fs"), binary.GetPropStr("path"))
 		} else {
 			if binary.GetPropStr("binType") == "deb" {
+				binariesOutput[binary.Name] = "deb"
 				err = r.installDeb(binary.GetPropStr("path"))
 			} else if binary.GetPropStr("binType") == "rpm" {
+				binariesOutput[binary.Name] = "rpm"
 				err = r.installRpm(binary.GetPropStr("path"))
 			} else {
+				binariesOutput[binary.Name] = "binary"
 				err = r.installBinary(binary.GetPropStr("path"))
 			}
 		}
 		if err != nil {
+			output.Output().Set("asset_installed_binaries", binariesOutput)
 			return err
 		}
 		installedBinaries = append(installedBinaries, binary.Name)
 	}
+
+	output.Output().Set("asset_installed_binaries", binariesOutput)
 	return nil
 }

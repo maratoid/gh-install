@@ -7,10 +7,12 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"strings"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/manifoldco/promptui"
 	"github.com/mholt/archiver/v4"
+	"github.com/maratoid/gh-install/output"
 )
 
 type ISelector interface {
@@ -26,6 +28,11 @@ type Selector struct {
 
 func (s *Selector) SelectItems() ([]*SelectorItem, error) {
 	var selectedItems []*SelectorItem
+	var matches []string
+
+	output.Output().Set(fmt.Sprintf("%s_%s", strings.ReplaceAll(s.Kind, " ", "_"), "matcher"), s.Matcher)
+	output.Output().Set(fmt.Sprintf("%s_%s", strings.ReplaceAll(s.Kind, " ", "_"), "multiple"), s.Multiple)
+	
 	for _, item := range s.Items {
 		match, err := regexp.MatchString(s.Matcher, item.Name)
 		if err != nil {
@@ -34,8 +41,14 @@ func (s *Selector) SelectItems() ([]*SelectorItem, error) {
 		if match {
 			item.Selected = true
 			selectedItems = append(selectedItems, item)
+			matches = append(matches, item.Name)
 		}
 	}
+
+	if matches == nil {
+		matches = make([]string, 0, 1)
+	}
+	output.Output().Set(fmt.Sprintf("%s_%s", strings.ReplaceAll(s.Kind, " ", "_"), "matches"), matches)
 
 	if !s.Multiple && len(selectedItems) > 1 {
 		return nil, fmt.Errorf("more than one item matching '%s' found for %s", s.Matcher, s.Kind)
@@ -81,7 +94,7 @@ func (s *InteractiveSelector) SelectItems() ([]*SelectorItem, error) {
 	} else {
 		// Define promptui template
 		templates = &promptui.SelectTemplates{
-			Active: "→ {{ .Name | cyan }}",
+			Active:   "→ {{ .Name | cyan }}",
 			Inactive: "{{ .Name }}",
 		}
 	}
@@ -135,7 +148,7 @@ func ReleaseSelector(ghClient *api.RESTClient, repo string, version string, inte
 	for _, val := range response {
 		items = append(items, MakeSelectorItem(val.Tag_name, false, MakeProp("id", val.Id)))
 	}
-	
+
 	if interactive {
 		return &InteractiveSelector{
 			Kind:     "release versions",
@@ -150,13 +163,13 @@ func ReleaseSelector(ghClient *api.RESTClient, repo string, version string, inte
 		response := struct {
 			Tag_name string
 		}{}
-		
+
 		err := ghClient.Get(fmt.Sprintf("repos/%s/releases/latest", repo), &response)
 		if err != nil {
 			return nil, err
 		}
 		versionMatcher = response.Tag_name
-	} 
+	}
 
 	return &Selector{
 		Kind:     "release versions",
@@ -241,14 +254,12 @@ func BinarySelector(downloadPath string, matcher string, interactive bool) (ISel
 		return nil, err
 	}
 
-	var allPaths []string
 	err = fs.WalkDir(fileSystem, ".", func(fsPath string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
 		if !d.IsDir() {
-			allPaths = append(allPaths, fsPath)
 			items = append(items,
 				MakeSelectorItem(
 					d.Name(),
