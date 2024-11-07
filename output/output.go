@@ -4,15 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"sync"
 	"strings"
+	"sync"
+
+	hpretty "github.com/gobs/pretty"
+	"github.com/tidwall/pretty"
 	"golang.org/x/term"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
-	"github.com/tidwall/pretty"
-	hpretty "github.com/gobs/pretty"
 )
-
 
 var lock = &sync.Mutex{}
 
@@ -24,17 +24,17 @@ type OutputMap struct {
 var outputMap *OutputMap
 
 func Output() *OutputMap {
-    if outputMap == nil {
-        lock.Lock()
-        defer lock.Unlock()
-        if outputMap == nil {
-            outputMap = &OutputMap{
+	if outputMap == nil {
+		lock.Lock()
+		defer lock.Unlock()
+		if outputMap == nil {
+			outputMap = &OutputMap{
 				content: make(map[string]interface{}),
 			}
-        }
-    }
+		}
+	}
 
-    return outputMap
+	return outputMap
 }
 
 func (c *OutputMap) Set(key string, value any) {
@@ -53,10 +53,10 @@ func (c *OutputMap) Get(key string) any {
 func (c *OutputMap) Print(asJson bool) {
 	c.RLock()
 	defer c.RUnlock()
-	
+
 	if asJson {
 		var jsonOut []byte
-		
+
 		out, err := json.Marshal(&c.content)
 		if err != nil {
 			out = []byte(fmt.Sprintf("{\"error\": \"%s\"}", err))
@@ -74,11 +74,11 @@ func (c *OutputMap) Print(asJson bool) {
 		printer.TabWidth(40)
 		for key, value := range c.content {
 			printer.Print(cases.Title(language.Und).String(strings.ReplaceAll(key, "_", " ")))
-			
+
 			var printVal string
 			if s, ok := value.(map[string]string); ok {
 				for sKey, sValue := range s {
-					printVal =  fmt.Sprintf("%s%v (%v), ", printVal, sKey, sValue)
+					printVal = fmt.Sprintf("%s%v (%v), ", printVal, sKey, sValue)
 				}
 				printVal = strings.TrimSuffix(printVal, ", ")
 			} else {
@@ -86,6 +86,6 @@ func (c *OutputMap) Print(asJson bool) {
 			}
 			printer.Print(printVal)
 		}
-		
+
 	}
 }

@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/cli/go-gh/v2/pkg/api"
-	"github.com/maratoid/gh-install/release"
 	"github.com/maratoid/gh-install/output"
+	"github.com/maratoid/gh-install/release"
 	"github.com/spf13/cobra"
 )
 
@@ -27,14 +27,14 @@ var (
 		Long: `Install binaries for a Github repository release interactively or non-interactively.
 			Intended for quickly installing release binaries for projects that do not distribute
 			using Homebrew or other package managers.`,
-		Args: validateRepositoryArg,
-		RunE: runInstall,
-		Version: "1.0.0",
+		Args:    validateRepositoryArg,
+		RunE:    runInstall,
+		Version: "1.1.0",
 	}
-	targetRepo, releaseVersion, releaseInstallPath string
-	downloadPattern, binaryPattern                 string
-	interactive, jsonOut                           bool
-	ghClient                                       *api.RESTClient
+	targetRepo, releaseVersion, releaseInstallPath           string
+	downloadPattern, binaryPattern, binaryName, downloadName string
+	interactive, jsonOut                                     bool
+	ghClient                                                 *api.RESTClient
 )
 
 func validateRepositoryArg(cmd *cobra.Command, args []string) error {
@@ -60,7 +60,7 @@ func validateRepositoryArg(cmd *cobra.Command, args []string) error {
 
 	targetRepo = args[0]
 	if binaryPattern == "" {
-		binaryPattern = strings.Split(targetRepo, "/")[1]
+		binaryPattern = fmt.Sprintf("^%s$", strings.Split(targetRepo, "/")[1])
 	}
 
 	return nil
@@ -71,7 +71,9 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		targetRepo,
 		releaseVersion,
 		releaseInstallPath,
+		downloadName,
 		downloadPattern,
+		binaryName,
 		binaryPattern,
 		ghClient,
 		interactive)
@@ -79,7 +81,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 }
 
 func Execute() {
-	os.Exit(func () int {
+	os.Exit(func() int {
 		var err error
 		ghClient, err = api.DefaultRESTClient()
 		if err != nil {
@@ -93,7 +95,6 @@ func Execute() {
 			printOutput(err)
 			return 1
 		}
-
 
 		printOutput(err)
 		return 0
@@ -111,13 +112,17 @@ func printOutput(err error) {
 }
 
 func init() {
-	rootCmd.Flags().StringVarP(&binaryPattern, "binaries", "b", "",
-		"install release asset archive binaries matching pattern. If empty, repository name is used.")
+	rootCmd.Flags().StringVarP(&binaryName, "binary", "b", "",
+		"install release asset archive binary name. If empty, '--binary-regex' is used.")
+	rootCmd.Flags().StringVarP(&binaryPattern, "binary-regex", "", "",
+		"lookup regexp for release asset archive binary. If empty, repository name is used.")
 	rootCmd.Flags().StringVarP(&releaseVersion, "tag", "t", GH_INSTALL_VERSION_LATEST,
 		"release tag (version) to install.")
-	rootCmd.Flags().StringVarP(&downloadPattern, "download", "d",
+	rootCmd.Flags().StringVarP(&downloadName, "download", "d", "",
+		"name for release asset to download. If empty, '--download-regex' is used.")
+	rootCmd.Flags().StringVarP(&downloadPattern, "download-regex", "",
 		fmt.Sprintf("^.*(?:%s.+%s|%s.+%s)+.*$", runtime.GOARCH, runtime.GOOS, runtime.GOOS, runtime.GOARCH),
-		"name or lookup regexp for release asset to download.")
+		"lookup regexp for release asset to download.")
 	rootCmd.Flags().BoolVarP(&jsonOut, "json", "j", false,
 		"JSON output")
 	rootCmd.Flags().BoolVarP(&interactive, "interactive", "i", false,

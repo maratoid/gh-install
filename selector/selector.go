@@ -2,17 +2,20 @@ package selector
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"path"
 	"regexp"
 	"strings"
 
 	"github.com/cli/go-gh/v2/pkg/api"
+	"github.com/lithammer/fuzzysearch/fuzzy"
 	"github.com/manifoldco/promptui"
-	"github.com/mholt/archiver/v4"
 	"github.com/maratoid/gh-install/output"
+	"github.com/mholt/archiver/v4"
 )
 
 type ISelector interface {
@@ -22,6 +25,7 @@ type ISelector interface {
 type Selector struct {
 	Kind     string
 	Items    []*SelectorItem
+	Name     string
 	Matcher  string
 	Multiple bool
 }
@@ -32,16 +36,25 @@ func (s *Selector) SelectItems() ([]*SelectorItem, error) {
 
 	output.Output().Set(fmt.Sprintf("%s_%s", strings.ReplaceAll(s.Kind, " ", "_"), "matcher"), s.Matcher)
 	output.Output().Set(fmt.Sprintf("%s_%s", strings.ReplaceAll(s.Kind, " ", "_"), "multiple"), s.Multiple)
-	
+
 	for _, item := range s.Items {
-		match, err := regexp.MatchString(s.Matcher, item.Name)
-		if err != nil {
-			return nil, err
-		}
-		if match {
-			item.Selected = true
-			selectedItems = append(selectedItems, item)
-			matches = append(matches, item.Name)
+		if s.Name == "" {
+			match, err := regexp.MatchString(s.Matcher, item.Name)
+			if err != nil {
+				return nil, err
+			}
+			if match {
+				item.Selected = true
+				selectedItems = append(selectedItems, item)
+				matches = append(matches, item.Name)
+			}
+
+		} else {
+			if strings.Compare(strings.ToLower(s.Name), strings.ToLower(item.Name)) == 0 {
+				item.Selected = true
+				selectedItems = append(selectedItems, item)
+				matches = append(matches, item.Name)
+			}
 		}
 	}
 
@@ -69,6 +82,10 @@ type InteractiveSelector struct {
 	Multiple     bool
 }
 
+func (s *InteractiveSelector) searcher(input string, index int) bool {
+	return fuzzy.Match(input, s.Items[index].Name)
+}
+
 func (s *InteractiveSelector) SelectItems() ([]*SelectorItem, error) {
 	var templates *promptui.SelectTemplates
 
@@ -85,6 +102,7 @@ func (s *InteractiveSelector) SelectItems() ([]*SelectorItem, error) {
 
 		// Define promptui template
 		templates = &promptui.SelectTemplates{
+			Help: "Use <Enter> to mark/unmark selection, '↓ ↑ → ←' to navigate. Select 'Done' when finished.",
 			Label: `{{ if .Selected }}
 						✔
 					{{ end }} {{ .Name }}`,
@@ -94,18 +112,32 @@ func (s *InteractiveSelector) SelectItems() ([]*SelectorItem, error) {
 	} else {
 		// Define promptui template
 		templates = &promptui.SelectTemplates{
+			Help:     "Use <Enter> to select, '/' to search and '↓ ↑ → ←' to navigate.",
 			Active:   "→ {{ .Name | cyan }}",
 			Inactive: "{{ .Name }}",
 		}
 	}
+	var prompt promptui.Select
 
-	prompt := promptui.Select{
-		Label:        s.Prompt,
-		Items:        s.Items,
-		Templates:    templates,
-		Size:         5,
-		CursorPos:    s.LastSelected,
-		HideSelected: true,
+	if s.Multiple {
+		prompt = promptui.Select{
+			Label:        s.Prompt,
+			Items:        s.Items,
+			Templates:    templates,
+			Size:         10,
+			CursorPos:    s.LastSelected,
+			HideSelected: true,
+		}
+	} else {
+		prompt = promptui.Select{
+			Label:        s.Prompt,
+			Items:        s.Items,
+			Searcher:     s.searcher,
+			Templates:    templates,
+			Size:         10,
+			CursorPos:    s.LastSelected,
+			HideSelected: true,
+		}
 	}
 
 	selectionIndex, _, err := prompt.Run()
@@ -151,10 +183,11 @@ func ReleaseSelector(ghClient *api.RESTClient, repo string, version string, inte
 
 	if interactive {
 		return &InteractiveSelector{
-			Kind:     "release versions",
-			Items:    items,
-			Prompt:   fmt.Sprintf("Please select %s release tag", repo),
-			Multiple: false,
+			Kind:         "release versions",
+			Items:        items,
+			Prompt:       fmt.Sprintf("Please select %s release tag", repo),
+			LastSelected: 0,
+			Multiple:     false,
 		}, nil
 	}
 
@@ -180,39 +213,67 @@ func ReleaseSelector(ghClient *api.RESTClient, repo string, version string, inte
 }
 
 func AssetSelector(ghClient *api.RESTClient, repo string,
-	releaseId int, matcher string, interactive bool) (ISelector, error) {
-	response := []struct {
-		Name string
-	}{}
-
-	err := ghClient.Get(fmt.Sprintf("repos/%s/releases/%d/assets", repo, releaseId), &response)
-	if err != nil {
-		return nil, err
+	releaseId int, name string, matcher string, interactive bool) (ISelector, error) {
+	var linkRE = regexp.MustCompile(`<([^>]+)>;\s*rel="([^"]+)"`)
+	var items []*SelectorItem
+	page := 1
+	requestPath := fmt.Sprintf("repos/%s/releases/%d/assets", repo, releaseId)
+	findNextPage := func(response *http.Response) (string, bool) {
+		for _, m := range linkRE.FindAllStringSubmatch(response.Header.Get("Link"), -1) {
+			if len(m) > 2 && m[2] == "next" {
+				return m[1], true
+			}
+		}
+		return "", false
 	}
 
-	var items []*SelectorItem
-	for index, val := range response {
-		items = append(items, MakeSelectorItem(val.Name, false, MakeProp("id", index)))
+	for {
+		response, err := ghClient.Request(http.MethodGet, requestPath, nil)
+		if err != nil {
+			return nil, err
+		}
+		decoder := json.NewDecoder(response.Body)
+
+		responseData := []struct{ Name string }{}
+		err = decoder.Decode(&responseData)
+		if err != nil {
+			return nil, err
+		}
+		if err := response.Body.Close(); err != nil {
+			return nil, err
+		}
+
+		for index, val := range responseData {
+			items = append(items, MakeSelectorItem(val.Name, false, MakeProp("id", index)))
+		}
+
+		var hasNextPage bool
+		if requestPath, hasNextPage = findNextPage(response); !hasNextPage {
+			break
+		}
+		page++
 	}
 
 	if interactive {
 		return &InteractiveSelector{
-			Kind:     "release assets",
-			Items:    items,
-			Prompt:   fmt.Sprintf("Please select %s asset", repo),
-			Multiple: false,
+			Kind:         "release assets",
+			Items:        items,
+			Prompt:       fmt.Sprintf("Please select %s asset", repo),
+			LastSelected: 0,
+			Multiple:     false,
 		}, nil
 	}
 
 	return &Selector{
 		Kind:     "release assets",
 		Items:    items,
+		Name:     name,
 		Matcher:  matcher,
 		Multiple: false,
 	}, nil
 }
 
-func BinarySelector(downloadPath string, matcher string, interactive bool) (ISelector, error) {
+func BinarySelector(downloadPath string, name string, matcher string, interactive bool) (ISelector, error) {
 	inputStream, err := os.Open(downloadPath)
 	if err != nil {
 		return nil, err
@@ -232,16 +293,18 @@ func BinarySelector(downloadPath string, matcher string, interactive bool) (ISel
 
 			if interactive {
 				return &InteractiveSelector{
-					Kind:     "release asset binaries",
-					Items:    items,
-					Prompt:   "Confirm release binary to be installed",
-					Multiple: false,
+					Kind:         "release asset binaries",
+					Items:        items,
+					Prompt:       "Confirm release binary to be installed",
+					LastSelected: 0,
+					Multiple:     false,
 				}, nil
 			}
 
 			return &Selector{
 				Kind:     "release asset binaries",
 				Items:    items,
+				Name:     name,
 				Matcher:  path.Base(downloadPath),
 				Multiple: false,
 			}, nil
@@ -277,16 +340,18 @@ func BinarySelector(downloadPath string, matcher string, interactive bool) (ISel
 
 	if interactive {
 		return &InteractiveSelector{
-			Kind:     "release asset binaries",
-			Items:    items,
-			Prompt:   "Select binaries to be installed",
-			Multiple: true,
+			Kind:         "release asset binaries",
+			Items:        items,
+			Prompt:       "Select binaries to be installed",
+			LastSelected: 1,
+			Multiple:     true,
 		}, nil
 	}
 
 	return &Selector{
 		Kind:     "release asset binaries",
 		Items:    items,
+		Name:     name,
 		Matcher:  matcher,
 		Multiple: false,
 	}, nil

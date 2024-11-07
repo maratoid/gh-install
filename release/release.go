@@ -10,8 +10,8 @@ import (
 
 	"github.com/cli/go-gh/v2"
 	"github.com/cli/go-gh/v2/pkg/api"
-	"github.com/maratoid/gh-install/selector"
 	"github.com/maratoid/gh-install/output"
+	"github.com/maratoid/gh-install/selector"
 )
 
 type IRelease interface {
@@ -23,20 +23,25 @@ type GithubRelease struct {
 	Interactive        bool
 	ReleaseVersion     string
 	InstallPath        string
+	AssetName          string
 	AssetPattern       string
+	AssetBinaryName    string
 	AssetBinaryPattern string
 	Client             *api.RESTClient
 }
 
 func MakeGithubRelease(repo string, ver string, dest string,
-	assetMatcher string, binMatcher string, cli *api.RESTClient, interactive bool) IRelease {
+	assetName string, assetMatcher string, binName string, binMatcher string,
+	cli *api.RESTClient, interactive bool) IRelease {
 
 	return &GithubRelease{
 		Repository:         repo,
 		Interactive:        interactive,
 		ReleaseVersion:     ver,
 		InstallPath:        dest,
+		AssetName:          assetName,
 		AssetPattern:       assetMatcher,
+		AssetBinaryName:    binName,
 		AssetBinaryPattern: binMatcher,
 		Client:             cli,
 	}
@@ -142,7 +147,7 @@ func (r *GithubRelease) Install() error {
 		return err
 	}
 
-	assetSelector, err := selector.AssetSelector(r.Client, r.Repository, releases[0].GetPropInt("id"), r.AssetPattern, r.Interactive)
+	assetSelector, err := selector.AssetSelector(r.Client, r.Repository, releases[0].GetPropInt("id"), r.AssetName, r.AssetPattern, r.Interactive)
 	if err != nil {
 		return err
 	}
@@ -166,7 +171,7 @@ func (r *GithubRelease) Install() error {
 	output.Output().Set("gh_stdout", stdOut.String())
 
 	binarySelector, err := selector.BinarySelector(path.Join(downloadDir,
-		assets[0].Name), r.AssetBinaryPattern, r.Interactive)
+		assets[0].Name), r.AssetBinaryName, r.AssetBinaryPattern, r.Interactive)
 	if err != nil {
 		return err
 	}
@@ -175,7 +180,6 @@ func (r *GithubRelease) Install() error {
 		return err
 	}
 
-	var installedBinaries []string
 	binariesOutput := make(map[string]string)
 	for _, binary := range binaries {
 		if binary.GetPropBool("archive") {
@@ -197,7 +201,6 @@ func (r *GithubRelease) Install() error {
 			output.Output().Set("asset_installed_binaries", binariesOutput)
 			return err
 		}
-		installedBinaries = append(installedBinaries, binary.Name)
 	}
 
 	output.Output().Set("asset_installed_binaries", binariesOutput)

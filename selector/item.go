@@ -4,11 +4,10 @@ import (
 	"io/fs"
 )
 
-
 // selection item with collection of IProperty properties
 type SelectorItem struct {
-	Name string
-	Selected bool
+	Name       string
+	Selected   bool
 	Properties map[string]interface{}
 }
 
@@ -28,16 +27,17 @@ func (i SelectorItem) GetPropFs(key string) fs.FS {
 	return i.Properties[key].(fs.FS)
 }
 func (i SelectorItem) SetProp(key string, value interface{}) {
-    i.Properties[key] = value
+	i.Properties[key] = value
 }
 
 type PropertyPair struct {
-	Key string
+	Key   string
 	Value interface{}
 }
+
 func MakeProp(key string, val interface{}) PropertyPair {
 	return PropertyPair{
-		Key: key,
+		Key:   key,
 		Value: val,
 	}
 }
@@ -49,8 +49,8 @@ func MakeSelectorItem(name string, selected bool, properties ...PropertyPair) *S
 	}
 
 	return &SelectorItem{
-		Name: name,
-		Selected: selected,
+		Name:       name,
+		Selected:   selected,
 		Properties: propMap,
 	}
 }
