@@ -12,6 +12,7 @@ import (
 	"github.com/maratoid/gh-install/output"
 	"github.com/maratoid/gh-install/release"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 const (
@@ -29,16 +30,16 @@ var (
 			using Homebrew or other package managers.`,
 		Args:    validateRepositoryArg,
 		RunE:    runInstall,
-		Version: "1.1.1",
+		Version: "1.1.2",
 	}
 	targetRepo, releaseVersion, releaseInstallPath           string
 	downloadPattern, binaryPattern, binaryName, downloadName string
-	interactive, jsonOut                                     bool
+	interactive, jsonOut, noCreatePath                       bool
 	ghClient                                                 *api.RESTClient
 )
 
 func validateRepositoryArg(cmd *cobra.Command, args []string) error {
-	if jsonOut && !interactive {
+	if viper.GetBool("json") && !viper.GetBool("interactive") {
 		cmd.SilenceUsage = true
 		cmd.SilenceErrors = true
 	}
@@ -59,24 +60,48 @@ func validateRepositoryArg(cmd *cobra.Command, args []string) error {
 	}
 
 	targetRepo = args[0]
-	if binaryPattern == "" {
-		binaryPattern = fmt.Sprintf("^%s$", strings.Split(targetRepo, "/")[1])
+	if viper.GetString("binary-regex") == "" {
+		viper.Set("binary-regex", fmt.Sprintf("^%s$", strings.Split(targetRepo, "/")[1]))
 	}
 
 	return nil
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
+
+	if viper.GetString("path") == "" {
+		return fmt.Errorf("could not determine default installation directory, provide via '--path'")
+	}
+
+	if noCreatePath {
+		targetPathInfo, err := os.Stat(viper.GetString("path"))
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return fmt.Errorf("target installation path '%s' does not exist", viper.GetString("path"))
+			}
+			return fmt.Errorf("could not stat %s: %v", viper.GetString("path"), err)
+		}
+
+		if !targetPathInfo.Mode().IsDir() {
+			return fmt.Errorf("target installation path '%s' is not a directory", viper.GetString("path"))
+		}
+	} else {
+		err := os.MkdirAll(viper.GetString("path"), os.ModePerm)
+		if err != nil {
+			return err
+		}
+	}
+
 	installRelease := release.MakeGithubRelease(
 		targetRepo,
-		releaseVersion,
-		releaseInstallPath,
-		downloadName,
-		downloadPattern,
-		binaryName,
-		binaryPattern,
+		viper.GetString("tag"),
+		viper.GetString("path"),
+		viper.GetString("download"),
+		viper.GetString("download-regex"),
+		viper.GetString("binary"),
+		viper.GetString("binary-regex"),
 		ghClient,
-		interactive)
+		viper.GetBool("interactive"))
 	return installRelease.Install()
 }
 
@@ -102,7 +127,7 @@ func Execute() {
 }
 
 func printOutput(err error) {
-	if interactive {
+	if viper.GetBool("interactive") {
 		return
 	}
 
@@ -111,7 +136,17 @@ func printOutput(err error) {
 	}
 }
 
+func getDefaultInstallPath() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	return path.Join(homeDir, ".local", "bin")
+}
+
 func init() {
+	viper.SetEnvPrefix("gh_install")
 	rootCmd.Flags().StringVarP(&binaryName, "binary", "b", "",
 		"install release asset archive binary name. If empty, '--binary-regex' is used.")
 	rootCmd.Flags().StringVarP(&binaryPattern, "binary-regex", "", "",
@@ -127,9 +162,10 @@ func init() {
 		"JSON output")
 	rootCmd.Flags().BoolVarP(&interactive, "interactive", "i", false,
 		"Use interactive installation. If true, all other flags are ignored")
-
-	releaseInstallPath = os.Getenv(GH_INSTALL_ENV_PATH)
-	if releaseInstallPath == "" {
-		releaseInstallPath = path.Join(os.Getenv("HOME"), ".local", "bin")
-	}
+	rootCmd.Flags().StringVarP(&releaseInstallPath, "path", "p", getDefaultInstallPath(),
+		"Target installation directory.")
+	rootCmd.Flags().BoolVarP(&noCreatePath, "no-create", "", false,
+		"Do not create target installation directory if it does not exist.")
+	viper.BindPFlags(rootCmd.Flags())
+	viper.AutomaticEnv()
 }
