@@ -1,7 +1,29 @@
 package main
 
-import "github.com/maratoid/gh-install/cmd"
+import (
+	"os"
+
+	"github.com/alecthomas/kong"
+	"github.com/maratoid/gh-install/cmd"
+)
 
 func main() {
-	cmd.Execute()
+
+	var cli cmd.RootCLI
+
+	ctx := kong.Parse(&cli,
+		kong.Name("gh-install"),
+		kong.Description("Install Github repository releases"),
+		kong.DefaultEnvars(cmd.GetEnvPrefix()),
+		kong.PostBuild(cmd.PostBuild),
+		kong.Vars{
+			"release_asset_regexp": cmd.GetDefaultAssetRegexp(),
+			"install_path":         cmd.GetDefaultTargetPath(),
+			"version":              "2.0.0",
+		})
+
+	err := ctx.Run()
+	if err != nil {
+		os.Exit(1)
+	}
 }
