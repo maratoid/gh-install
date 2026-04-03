@@ -13,7 +13,9 @@ func main() {
 
 	ctx := kong.Parse(&cli,
 		kong.Name("gh-install"),
-		kong.Description("Install Github repository releases"),
+		kong.Description(`Install binaries for a Github repository release interactively or non-interactively.  
+			Intended for quickly installing release binaries for projects that do not distribute 
+			using Homebrew or other package managers.`),
 		kong.DefaultEnvars(cmd.GetEnvPrefix()),
 		kong.PostBuild(cmd.PostBuild),
 		kong.Vars{
